@@ -6,18 +6,19 @@
 const STATUSES = ["PREP","LIVE","SOLD","UNSOLD","RELISTED","PAID","PICKED_UP","CLOSED","NEEDS_REVIEW"];
 const STATUS_LABEL = { PREP:"Prep", LIVE:"Live", SOLD:"Sold", UNSOLD:"Unsold", RELISTED:"Relisted",
   PAID:"Paid", PICKED_UP:"Picked up", CLOSED:"Closed", NEEDS_REVIEW:"Review" };
-const STORE_KEY = "csulb_auction_console_v2";
+const STORE_KEY = "csulb_auction_console_v3";
 
 /* Column definitions drive the header, sorting, filtering, and cells */
 const COLUMNS = [
-  { key:"survey",      label:"Survey #",  filter:"text",   sort:"text" },
-  { key:"description", label:"Item",      filter:"text",   sort:"text" },
-  { key:"tag",         label:"Tag #",     filter:"text",   sort:"text" },
-  { key:"dept",        label:"Department",filter:"select", sort:"text" },
-  { key:"condition",   label:"Cond.",     filter:"select", sort:"text" },
-  { key:"status",      label:"Status",    filter:"select", sort:"text" },
-  { key:"platforms",   label:"Platforms", filter:"select", sort:"none" },
-  { key:"amount",      label:"Est. Value",filter:"none",   sort:"num", align:"right" },
+  { key:"survey",       label:"Survey #",     filter:"text",   sort:"text" },
+  { key:"description",  label:"Item",         filter:"text",   sort:"text" },
+  { key:"tag",          label:"Tag #",        filter:"text",   sort:"text" },
+  { key:"dateAssigned", label:"Date Assigned",filter:"text",   sort:"date" },
+  { key:"dept",         label:"Department",   filter:"select", sort:"text" },
+  { key:"condition",    label:"Cond.",        filter:"select", sort:"text" },
+  { key:"status",       label:"Status",       filter:"select", sort:"text" },
+  { key:"platforms",    label:"Platforms",    filter:"select", sort:"none" },
+  { key:"currentBid",   label:"Current Bid",  filter:"none",   sort:"num", align:"right" },
 ];
 
 /* ---------- State ---------- */
@@ -34,15 +35,25 @@ let popCol = null;         // column whose filter popup is open
 
 /* ---------- Record ---------- */
 function uid(){ return 'i'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
-function newPlat(){ return { listed:false, releases:0, url:"", price:"", soldPrice:"" }; }
+function newPlat(){ return { listed:false, releases:0, url:"", price:"", currentBid:"", soldPrice:"" }; }
 function blankItem(){ return { id:uid(), survey:"", description:"", serial:"", tag:"", assetId:"", year:"",
-  amount:"", deptId:"", dept:"", drk:"", condition:"", status:"PREP", notes:"",
+  amount:"", currentBid:"", dateAssigned:"", deptId:"", dept:"", drk:"", condition:"", status:"PREP", notes:"",
   platforms:{ GD:newPlat(), PS:newPlat() } }; }
 function migrate(it){
   it.platforms = it.platforms || {};
   it.platforms.GD = Object.assign(newPlat(), it.platforms.GD||{});
   it.platforms.PS = Object.assign(newPlat(), it.platforms.PS||{});
+  if(it.dateAssigned==null) it.dateAssigned="";
+  if(it.currentBid==null) it.currentBid="";
   if(!it.status) it.status="PREP"; if(!it.id) it.id=uid(); return it;
+}
+/* The current bid shown on a row = highest live bid across listed platforms,
+   falling back to the item-level currentBid the parser/scraper set. */
+function rowCurrentBid(it){
+  const vals=[it.currentBid, it.platforms.GD.currentBid, it.platforms.PS.currentBid]
+    .map(v=>{ const n=parseFloat(String(v).replace(/[^0-9.\-]/g,"")); return isNaN(n)?null:n; })
+    .filter(v=>v!=null);
+  return vals.length?Math.max(...vals):"";
 }
 
 /* ---------- Persistence ---------- */
@@ -54,12 +65,25 @@ function load(){ try{ const r=localStorage.getItem(STORE_KEY); if(r){ items=(JSO
    Excel / CSV parsing
    =================================================================== */
 function fmtAmount(v){ if(v===""||v==null) return ""; const n=typeof v==="number"?v:parseFloat(String(v).replace(/[^0-9.\-]/g,"")); return isNaN(n)?"":n; }
+function fmtDate(v){
+  if(v===""||v==null) return "";
+  // Excel serial date (number) -> ISO yyyy-mm-dd
+  if(typeof v==="number" && v>20000 && v<80000){
+    const d=new Date(Math.round((v-25569)*86400*1000));
+    if(!isNaN(d)) return d.toISOString().slice(0,10);
+  }
+  const s=String(v).trim();
+  const d=new Date(s);
+  if(!isNaN(d) && /\d{4}/.test(s)) return d.toISOString().slice(0,10);
+  return s; // leave as-is if unparseable
+}
 function normH(h){ return String(h||"").replace(/\s+/g," ").trim().toLowerCase(); }
 const HEADER_MAP = [
   [["survey #","survey#","survey number","survey no","survey"],"survey"],
   [["description","item description","item"],"description"],
   [["serial#","serial #","serial number","serial","s/n","sn"],"serial"],
   [["tag #","tag#","tag","property tag","property tag #"],"tag"],
+  [["date assigned","assigned date","date surveyed","survey date","date"],"dateAssigned"],
   [["asset id","assetid","asset"],"assetId"],
   [["in service year","service year","acquisition year","year"],"year"],
   [["original amount","original value","est market value","est. market value","value","amount"],"amount"],
@@ -88,6 +112,7 @@ function parseWorkbook(buf){
       if(!desc&&!survey) continue;
       rows.push({ survey, description:desc, serial:String(get("serial")||"").trim(),
         tag:String(get("tag")||"").trim(), assetId:String(get("assetId")||"").trim(),
+        dateAssigned:fmtDate(get("dateAssigned")),
         year:String(get("year")||"").trim(), amount:fmtAmount(get("amount")),
         deptId:String(get("deptId")||"").trim(), dept:String(get("dept")||"").trim(),
         drk:String(get("drk")||"").trim(), condition:String(get("condition")||"").trim(),
@@ -99,7 +124,7 @@ function parseWorkbook(buf){
 }
 function rowsToItems(rows,{auctionOnly,group}){
   let src = auctionOnly ? rows.filter(r=>r.action.includes("AUCTION")) : rows;
-  if(!group) return src.map(r=>Object.assign(blankItem(),{survey:r.survey,description:r.description,serial:r.serial,tag:r.tag,assetId:r.assetId,year:r.year,amount:r.amount,deptId:r.deptId,dept:r.dept,drk:r.drk,condition:r.condition,notes:r.notes}));
+  if(!group) return src.map(r=>Object.assign(blankItem(),{survey:r.survey,description:r.description,serial:r.serial,tag:r.tag,assetId:r.assetId,dateAssigned:r.dateAssigned,year:r.year,amount:r.amount,deptId:r.deptId,dept:r.dept,drk:r.drk,condition:r.condition,notes:r.notes}));
   const bySurvey=new Map(), loose=[];
   for(const r of src){ if(r.survey){ if(!bySurvey.has(r.survey)) bySurvey.set(r.survey,[]); bySurvey.get(r.survey).push(r); } else loose.push(r); }
   const out=[];
@@ -109,9 +134,9 @@ function rowsToItems(rows,{auctionOnly,group}){
       const extra=grp.slice(1).map(g=>"• "+g.description).join("\n");
       notes=(notes?notes+"\n\n":"")+`Line items in survey ${survey}:\n• ${first.description}\n${extra}`; }
     const best=grp.reduce((a,b)=>(Number(b.amount)||0)>(Number(a.amount)||0)?b:a,first);
-    out.push(Object.assign(blankItem(),{survey,description,serial:first.serial,tag:first.tag||best.tag,assetId:first.assetId,year:first.year,amount:best.amount,deptId:first.deptId,dept:first.dept,drk:first.drk,condition:first.condition,notes}));
+    out.push(Object.assign(blankItem(),{survey,description,serial:first.serial,tag:first.tag||best.tag,assetId:first.assetId,dateAssigned:first.dateAssigned,year:first.year,amount:best.amount,deptId:first.deptId,dept:first.dept,drk:first.drk,condition:first.condition,notes}));
   }
-  for(const r of loose) out.push(Object.assign(blankItem(),{description:r.description,serial:r.serial,tag:r.tag,assetId:r.assetId,year:r.year,amount:r.amount,deptId:r.deptId,dept:r.dept,drk:r.drk,condition:r.condition,notes:r.notes}));
+  for(const r of loose) out.push(Object.assign(blankItem(),{description:r.description,serial:r.serial,tag:r.tag,assetId:r.assetId,dateAssigned:r.dateAssigned,year:r.year,amount:r.amount,deptId:r.deptId,dept:r.dept,drk:r.drk,condition:r.condition,notes:r.notes}));
   return out;
 }
 function importItems(newItems,{merge}){
@@ -131,6 +156,7 @@ function cellValue(it,key){
     return a.length?a.join(", "):"Not listed";
   }
   if(key==="status") return STATUS_LABEL[it.status]||it.status;
+  if(key==="currentBid"){ const b=rowCurrentBid(it); return b===""?"":String(b); }
   return it[key]==null?"":String(it[key]);
 }
 /* distinct values for a select-filter column */
@@ -150,7 +176,7 @@ function distinctValues(key){
    =================================================================== */
 function matchesGlobal(it,term){
   if(!term) return true;
-  const hay=[it.survey,it.description,it.tag,it.serial,it.assetId,it.dept,it.deptId,it.notes,it.platforms.GD.url,it.platforms.PS.url].join(" ").toLowerCase();
+  const hay=[it.survey,it.description,it.tag,it.serial,it.assetId,it.dateAssigned,it.dept,it.deptId,it.notes,it.platforms.GD.url,it.platforms.PS.url].join(" ").toLowerCase();
   return term.toLowerCase().split(/\s+/).every(t=>hay.includes(t));
 }
 function passesColumnFilters(it){
@@ -176,7 +202,12 @@ function visibleItems(){
   let v=items.filter(it=>matchesGlobal(it,globalTerm)&&passesColumnFilters(it));
   const col=COLUMNS.find(c=>c.key===sortKey);
   v.sort((a,b)=>{
-    if(col&&col.sort==="num"){ const an=Number(a[sortKey])||0,bn=Number(b[sortKey])||0; return (an-bn)*sortDir; }
+    if(col&&col.sort==="num"){
+      const an=Number(cellValue(a,sortKey))||0, bn=Number(cellValue(b,sortKey))||0; return (an-bn)*sortDir;
+    }
+    if(col&&col.sort==="date"){
+      const ad=Date.parse(a[sortKey])||0, bd=Date.parse(b[sortKey])||0; return (ad-bd)*sortDir;
+    }
     const av=cellValue(a,sortKey).toLowerCase(), bv=cellValue(b,sortKey).toLowerCase();
     return av<bv?-1*sortDir:av>bv?1*sortDir:0;
   });
@@ -231,11 +262,12 @@ function rowHtml(it){
       case "survey": return `<td class="td-survey">${it.survey?esc(it.survey):'<span class="nosurvey">—</span>'}</td>`;
       case "description": return `<td class="td-desc"><span class="d">${esc(it.description)}</span>${it.serial?`<span class="sub">S/N ${esc(it.serial)}</span>`:""}</td>`;
       case "tag": return `<td class="td-mono">${esc(it.tag)||"—"}</td>`;
+      case "dateAssigned": return `<td class="td-mono">${esc(it.dateAssigned)||"—"}</td>`;
       case "dept": return `<td class="td-mono" title="${esc(it.dept)}">${esc(it.deptId)?esc(it.deptId)+" · ":""}${esc(it.dept)||"—"}</td>`;
       case "condition": return `<td class="td-mono">${esc(it.condition)||"—"}</td>`;
       case "status": return `<td>${statusSelect(it)}</td>`;
       case "platforms": return `<td>${platCell(it)}</td>`;
-      case "amount": return `<td class="td-amt">${money(it.amount)}</td>`;
+      case "currentBid": return `<td class="td-amt">${money(rowCurrentBid(it))}</td>`;
       default: return `<td>${esc(cellValue(it,c.key))}</td>`;
     }
   }).join("");
@@ -378,6 +410,7 @@ function platBlock(p,pl){
     <div class="frow">
       <div class="fgroup"><label>Releases</label><input type="number" min="0" data-f="platforms.${p}.releases" value="${esc(pl.releases)}"></div>
       <div class="fgroup"><label>List price</label><input data-f="platforms.${p}.price" value="${esc(pl.price)}" placeholder="$"></div>
+      <div class="fgroup"><label>Current bid</label><input data-f="platforms.${p}.currentBid" value="${esc(pl.currentBid)}" placeholder="$"></div>
       <div class="fgroup"><label>Sold price</label><input data-f="platforms.${p}.soldPrice" value="${esc(pl.soldPrice)}" placeholder="$"></div>
     </div>
     <div class="fgroup" style="margin-bottom:0"><label>Listing URL</label><input data-f="platforms.${p}.url" value="${esc(pl.url)}" placeholder="https://…"></div>
@@ -391,8 +424,10 @@ function drawerForm(it){
   <div class="frow"><div class="fgroup"><label>Tag #</label><input data-f="tag" value="${esc(it.tag)}"></div>
     <div class="fgroup"><label>Serial #</label><input data-f="serial" value="${esc(it.serial)}"></div>
     <div class="fgroup"><label>Asset ID</label><input data-f="assetId" value="${esc(it.assetId)}"></div></div>
-  <div class="frow"><div class="fgroup"><label>Est. value ($)</label><input data-f="amount" value="${esc(it.amount)}"></div>
-    <div class="fgroup"><label>Condition</label><input data-f="condition" value="${esc(it.condition)}"></div>
+  <div class="frow"><div class="fgroup"><label>Date Assigned</label><input type="date" data-f="dateAssigned" value="${esc(it.dateAssigned)}"></div>
+    <div class="fgroup"><label>Current bid ($)</label><input data-f="currentBid" value="${esc(it.currentBid)}" placeholder="live price now"></div>
+    <div class="fgroup"><label>Est. value at purchase ($)</label><input data-f="amount" value="${esc(it.amount)}"></div></div>
+  <div class="frow"><div class="fgroup"><label>Condition</label><input data-f="condition" value="${esc(it.condition)}"></div>
     <div class="fgroup"><label>Service year</label><input data-f="year" value="${esc(it.year)}"></div></div>
   <div class="frow"><div class="fgroup"><label>Dept ID</label><input data-f="deptId" value="${esc(it.deptId)}"></div>
     <div class="fgroup" style="flex:1.6"><label>Department</label><input data-f="dept" value="${esc(it.dept)}"></div></div>
@@ -422,7 +457,7 @@ function deleteFromDrawer(){ if(!editingId) return; const it=items.find(i=>i.id=
    =================================================================== */
 function exportJson(){ download(new Blob([JSON.stringify({version:2,exportedAt:new Date().toISOString(),items},null,2)],{type:"application/json"}),`auction-console-backup-${new Date().toISOString().slice(0,10)}.json`); toast("Backup downloaded."); }
 function exportCsv(){
-  const cols=["survey","description","tag","serial","assetId","year","amount","deptId","dept","condition","status","GD_listed","GD_releases","GD_price","GD_soldPrice","GD_url","PS_listed","PS_releases","PS_price","PS_soldPrice","PS_url","notes"];
+  const cols=["survey","description","tag","serial","assetId","dateAssigned","year","amount","currentBid","deptId","dept","condition","status","GD_listed","GD_releases","GD_price","GD_currentBid","GD_soldPrice","GD_url","PS_listed","PS_releases","PS_price","PS_currentBid","PS_soldPrice","PS_url","notes"];
   const q=s=>`"${String(s==null?"":s).replace(/"/g,'""')}"`;
   const lines=[cols.join(",")];
   items.forEach(it=>lines.push(cols.map(c=>c.startsWith("GD_")?q(it.platforms.GD[c.slice(3)]):c.startsWith("PS_")?q(it.platforms.PS[c.slice(3)]):q(it[c])).join(",")));
@@ -487,6 +522,10 @@ function wire(){
   document.getElementById("btnExport").onclick=showExportMenu;
   document.getElementById("btnRestore").onclick=()=>document.getElementById("fileJson").click();
   document.getElementById("fileJson").onchange=e=>{ if(e.target.files[0]) importJsonFile(e.target.files[0]); e.target.value=""; };
+  document.getElementById("btnPull").onclick=openPull;
+  document.getElementById("btnConvert").onclick=openConvert;
+  document.getElementById("btnRecap").onclick=openRecap;
+  wireConvert(); wirePull(); wireRecap();
 
   document.getElementById("globalSearch").addEventListener("input",e=>{ globalTerm=e.target.value; render(); });
 
@@ -573,12 +612,148 @@ function wire(){
   document.getElementById("optGroup").onchange=refreshPreview;
 
   document.addEventListener("keydown",e=>{
-    if(e.key==="Escape"){ closeFilterPop(); closeDrawer(false); closeImport(); }
+    if(e.key==="Escape"){ closeFilterPop(); closeDrawer(false); closeImport();
+      ["convertModal","pullModal","recapModal"].forEach(id=>document.getElementById(id).classList.remove("show")); }
     if((e.metaKey||e.ctrlKey)&&e.key==="s"&&editingId){ e.preventDefault(); saveDrawer(); }
   });
 }
 
 function fillBulkStatus(){ const sel=document.getElementById("bulkStatus"); STATUSES.forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=STATUS_LABEL[s]; sel.appendChild(o); }); }
+
+/* ===================================================================
+   v6: Convert / Pull / Recap modal handlers
+   =================================================================== */
+const F = window.AuctionFeatures;
+function showModal(id){ document.getElementById(id).classList.add("show"); }
+function hideModal(id){ document.getElementById(id).classList.remove("show"); }
+
+/* ---- Convert HTML ---- */
+let cvLastParsed=null;
+function openConvert(){ showModal("convertModal"); }
+function runConvert(target){
+  const src=document.getElementById("cvInput").value.trim();
+  if(!src){ toast("Paste a listing first.","warn"); return; }
+  try{
+    cvLastParsed=F.parseListingHtml(src);
+    document.getElementById("cvOutput").value=F.convertListing(src,target);
+    document.getElementById("cvOutDir").textContent="→ "+(target==="GD"?"GovDeals":"Public Surplus");
+    const p=cvLastParsed;
+    document.getElementById("cvParsed").innerHTML=
+      `Read: <b>${esc(p.title||"—")}</b> · Condition <b>${esc(p.condition||"—")}</b> · Survey# <b>${esc(p.survey||"—")}</b> · Tag# <b>${esc(p.tag||"—")}</b>`;
+  }catch(e){ console.error(e); toast("Couldn't parse that HTML.","warn"); }
+}
+function wireConvert(){
+  document.getElementById("cvClose").onclick=()=>hideModal("convertModal");
+  document.getElementById("convertModal").addEventListener("click",e=>{ if(e.target.id==="convertModal") hideModal("convertModal"); });
+  document.getElementById("cvToGD").onclick=()=>runConvert("GD");
+  document.getElementById("cvToPS").onclick=()=>runConvert("PS");
+  document.getElementById("cvCopy").onclick=()=>{ const o=document.getElementById("cvOutput"); if(!o.value){ toast("Nothing to copy yet."); return; } copyText(o.value); };
+  document.getElementById("cvToItem").onclick=()=>{
+    const src=document.getElementById("cvInput").value.trim(); if(!src){ toast("Paste a listing first.","warn"); return; }
+    const p=F.parseListingHtml(src); const it=itemFromParsed(p);
+    items.unshift(it); save(); render(); hideModal("convertModal"); openDrawer(it.id); toast("Item created from listing.");
+  };
+}
+
+/* Build an item record from a parsed listing block */
+function itemFromParsed(p){
+  const it=blankItem();
+  it.survey=p.survey||""; it.tag=p.tag||""; it.description=p.title||"Untitled item";
+  it.condition=p.condition||"";
+  if(p.bullets&&p.bullets.length) it.notes=p.bullets.map(b=>"• "+b).join("\n");
+  if(p.platform==="GD"){ it.platforms.GD.listed=true; }
+  else if(p.platform==="PS"){ it.platforms.PS.listed=true; }
+  return it;
+}
+/* Find the existing item that best matches a parsed listing (survey# > tag# > title) */
+function matchItem(p){
+  if(p.survey){ const m=items.find(i=>(i.survey||"").replace(/\s/g,"")===p.survey.replace(/\s/g,"")); if(m) return m; }
+  if(p.tag){ const m=items.find(i=>(i.tag||"")===p.tag); if(m) return m; }
+  if(p.title){ const t=p.title.toLowerCase(); const m=items.find(i=>i.description.toLowerCase().includes(t)||t.includes(i.description.toLowerCase())); if(m) return m; }
+  return null;
+}
+
+/* ---- Pull / Paste listings ---- */
+function openPull(){ document.getElementById("pullResult").classList.remove("show"); showModal("pullModal"); }
+async function doFetch(){
+  const box=document.getElementById("pullResult"); box.classList.add("show");
+  box.innerHTML="Fetching… this can take a moment.";
+  try{
+    const r=await F.pullListings();
+    const total=r.PS.length+r.GD.length;
+    let html=`Public Surplus: <b>${r.PS.length}</b> · GovDeals: <b>${r.GD.length}</b>.`;
+    if(r.errors.length) html+=`<br><span style="color:#e06b58">Errors: ${esc(r.errors.join(" / "))}</span>`;
+    if(total){
+      const applied=applyScraped([...r.PS,...r.GD]);
+      html+=`<br>Matched & updated <b>${applied}</b> existing item${applied!==1?"s":""} with live bids.`;
+      save(); render();
+    } else if(!r.errors.length){ html+=`<br>No listings returned — try the paste path below.`; }
+    box.innerHTML=html;
+  }catch(e){ box.innerHTML=`<span style="color:#e06b58">Fetch failed: ${esc(e.message)}. Use the paste path below.</span>`; }
+}
+/* apply scraped {platform,title,currentBid,url} rows onto matching items */
+function applyScraped(rows){
+  let n=0;
+  for(const row of rows){
+    const m=matchItem({title:row.title,survey:"",tag:""});
+    if(!m) continue;
+    const pk=row.platform==="GD"?"GD":"PS";
+    m.platforms[pk].listed=true;
+    if(row.currentBid) m.platforms[pk].currentBid=row.currentBid;
+    if(row.url) m.platforms[pk].url=row.url;
+    if(m.status==="PREP") m.status="LIVE";
+    n++;
+  }
+  return n;
+}
+function applyPaste(asNew){
+  const src=document.getElementById("plPaste").value.trim();
+  if(!src){ toast("Paste a listing first.","warn"); return; }
+  const p=F.parseListingHtml(src);
+  if(asNew){ const it=itemFromParsed(p); items.unshift(it); save(); render(); hideModal("pullModal"); openDrawer(it.id); toast("Added as new item."); return; }
+  const m=matchItem(p);
+  if(!m){ toast("No matching item found — try 'Add as new item'.","warn"); return; }
+  if(p.condition) m.condition=p.condition;
+  if(p.tag&&!m.tag) m.tag=p.tag;
+  const pk=p.platform==="GD"?"GD":(p.platform==="PS"?"PS":null);
+  if(pk) m.platforms[pk].listed=true;
+  if(p.bullets&&p.bullets.length){ const note="Listing details:\n"+p.bullets.map(b=>"• "+b).join("\n"); m.notes=m.notes?m.notes+"\n\n"+note:note; }
+  save(); render(); hideModal("pullModal"); openDrawer(m.id);
+  toast(`Updated "${m.survey||m.description}".`);
+}
+function wirePull(){
+  document.getElementById("plClose").onclick=()=>hideModal("pullModal");
+  document.getElementById("pullModal").addEventListener("click",e=>{ if(e.target.id==="pullModal") hideModal("pullModal"); });
+  document.getElementById("plFetch").onclick=doFetch;
+  document.getElementById("plApplyPaste").onclick=()=>applyPaste(false);
+  document.getElementById("plPasteAsNew").onclick=()=>applyPaste(true);
+}
+
+/* ---- Recap ---- */
+function openRecap(){ showModal("recapModal"); }
+function wireRecap(){
+  document.getElementById("rcClose").onclick=()=>hideModal("recapModal");
+  document.getElementById("recapModal").addEventListener("click",e=>{ if(e.target.id==="recapModal") hideModal("recapModal"); });
+  document.getElementById("rcGen").onclick=()=>{
+    const out=F.buildRecap(items,{
+      weekOf:document.getElementById("rcWeek").value.trim()||undefined,
+      to:document.getElementById("rcTo").value.trim()||undefined,
+      from:document.getElementById("rcFrom").value.trim()||undefined
+    });
+    document.getElementById("rcOut").value=out;
+  };
+  document.getElementById("rcCopy").onclick=()=>{ const v=document.getElementById("rcOut").value; if(!v){ toast("Generate first."); return; } copyText(v); };
+  document.getElementById("rcDownload").onclick=()=>{ const v=document.getElementById("rcOut").value; if(!v){ toast("Generate first."); return; }
+    download(new Blob([v],{type:"text/plain"}),`recap-${new Date().toISOString().slice(0,10)}.txt`); toast("Recap downloaded."); };
+}
+
+/* clipboard helper with fallback */
+function copyText(t){
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(()=>toast("Copied."),()=>fallbackCopy(t)); }
+  else fallbackCopy(t);
+}
+function fallbackCopy(t){ const ta=document.createElement("textarea"); ta.value=t; document.body.appendChild(ta); ta.select();
+  try{ document.execCommand("copy"); toast("Copied."); }catch(e){ toast("Copy failed — select manually.","warn"); } document.body.removeChild(ta); }
 
 /* ---------- boot ---------- */
 load(); fillBulkStatus(); wire(); render();

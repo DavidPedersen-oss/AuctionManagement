@@ -1,67 +1,93 @@
-# CSULB Auction Console
+# CSULB Auction Console — v6
 
-A single-page console for tracking surplus items flagged for auction, pulled
-straight from your **Master Survey** workbook. No server, no Python, no install.
-Built in the CSULB Property Management identity — black, gold, and red.
+A single-page console for tracking surplus items flagged for auction across
+**Public Surplus** and **GovDeals**, pulled from your Master Survey workbook.
+No server, no Python, no install. Built in the CSULB Property Management
+identity — black, gold, and red.
 
 ## Run it
 
+**Local (no internet needed for your data)**
+- Open `index.html` in any browser. Keep all four files together:
+  `index.html`, `app.js`, `features.js`, `xlsx.full.min.js`.
+
 **GitHub Pages (shareable link)**
-1. Put `index.html`, `app.js`, and `xlsx.full.min.js` in a repo.
+1. Put the four files in a repo.
 2. Settings → Pages → deploy from `main`, root folder.
 3. Open the published URL.
 
-**Local (no internet needed for data)**
-- Open `index.html` in any browser. Keep the three files together.
-- Fonts (Oswald/Inter) load from Google Fonts when online; offline they fall
-  back to system fonts gracefully.
+## What's new in v6
+
+**Date Assigned column** — shown on the dashboard, sortable, editable in the
+detail drawer, and read from the Master Survey on import (recognizes
+"Date Assigned", "Survey Date", "Assigned Date"; handles Excel date cells).
+
+**"Current Bid" replaces "Est. Value" on the dashboard** — the column now
+shows the live price an item is at right now (the highest current bid across
+its listed platforms). The original at-purchase value is still kept — it just
+lives in the drawer now as "Est. value at purchase," since it isn't useful at
+a glance.
+
+**Paste a listing to import it** — `Pull Listings` → paste the description
+HTML from a Public Surplus *or* GovDeals listing. It reads the title,
+condition, Survey#, Tag#, and bullet details, then either updates the matching
+item (matched by Survey# → Tag# → title) or adds it as new.
+
+**Built-in HTML converter** — `Convert HTML` turns a Public Surplus listing
+block into GovDeals format or vice-versa, rebuilding the markup in each
+platform's own conventions (PS uses underlined/bold headings and sibling
+`<ul>` nesting; GD uses `<b><u>` headings, `Condition: FAIR`, and nested
+`<ul>` inside `<li>`). You can also create a tracked item straight from a
+pasted block.
+
+**Weekly recap generator** — `Recap` produces a recap in your email format
+(Sold / Collected / Prepping → Relist, New, Released), grouped by department,
+each item as "Description – Asking Price $X." Copy it or download as .txt.
+
+**Pull live listings (best-effort)** — `Pull Listings` → `Fetch from web`
+tries to read the two public search pages through a CORS proxy and update
+matching items with live bids.
+
+### A note on web scraping from a static page
+
+A page opened from disk (or GitHub Pages) **cannot reliably fetch** GovDeals
+and Public Surplus directly: those sites block automated requests, and the
+browser blocks cross-site reads. The `Fetch from web` button routes through a
+public CORS proxy as a convenience, but it is best-effort — it can be
+rate-limited or stop working without warning.
+
+**The reliable path is paste-the-HTML**, which always works offline and never
+depends on a third party. If you need dependable automated scraping, the
+right tool is a small local helper (your Playwright/Chromium approach):
+it runs a real browser, isn't blocked, and can write a JSON the console
+imports. Ask and that companion can be added.
 
 ## Working with it
 
-**Import** — drop your `Master_-_Survey.xlsx`. It reads the survey sheet, finds
+**Import** — drop your `Master_-_Survey.xlsx`. Reads the survey sheet, finds
 the header row wherever it sits, and pulls every row where **Disposal Action =
-AUCTION**. Multiple line items under one survey collapse into a single entry
-(the individual items are kept in that entry's notes). Re-importing keeps your
-edits and only adds new surveys.
+AUCTION**. Multiple line items under one survey collapse into one entry.
+Re-importing keeps your edits and only adds new surveys.
 
-**Excel-style column filters** — every column header has its own control:
-- Survey #, Item, Tag → live text filter (type to narrow).
-- Department, Cond., Status, Platforms → click the **ALL ▼** button for an
-  autofilter checklist with value counts, search, and Select all / Clear.
-- Click the header label itself to sort.
-- Active filters show as removable pills under the search bar.
-
-**Change status without opening an item** — the Status column is an inline
-dropdown on every row. Pick a value and it saves instantly, recoloring to match.
-
-**Batch editing** — tick rows, then use the bar to set status, mark a platform,
-log a release (+1), or delete. Select-all respects the current filters.
-
-**Detailed editing** — click any row (or Edit) for the full side panel: every
-field plus per-platform releases, list price, sold price, and listing URL.
-
-**Export / Restore** — JSON backup (full fidelity) or CSV (for Excel). Restore
-reloads a JSON backup.
+**Excel-style column filters, inline status, batch editing, detail drawer,
+export/restore** — unchanged from v5; see the in-app footer hints.
 
 ## Statuses
 
 Prep · Live · Sold · Unsold · Relisted · Paid · Picked up · Closed · Review
 
+The recap maps statuses like this: Sold/Paid → **Sold**, Picked up →
+**Collected**, Relisted/Unsold → **Relist**, Prep → **New**, Live →
+**Released**.
+
 ## Files
 
     index.html           the console (UI, styles, embedded logos)
-    app.js               all logic (parse, filter, edit, persist)
+    app.js               core logic (parse, filter, edit, persist)
+    features.js          v6 add-ons (listing parser, converter, scraper, recap)
     xlsx.full.min.js     SheetJS, vendored so import works offline / on Pages
-
-## Adding live scraping later
-
-Keep this as the system of record. A scraper can later match listings back to
-these entries by survey #, tag #, or asset number and update each item's release
-count and sold price — those fields already exist in the data model. Because the
-app is static, scraping runs as a separate step that writes an updated JSON you
-re-import.
 
 ## Backup
 
-Your working copy lives in this browser. Export JSON regularly — that file is the
-real backup and restores everything exactly.
+Your working copy lives in this browser. Export JSON regularly — that file is
+the real backup and restores everything exactly.
