@@ -86,6 +86,15 @@ input,select,textarea{font-family:inherit}
 .globalsearch input{width:100%;padding:9px 13px 9px 36px;border:1.5px solid var(--line-strong);border-radius:8px;background:var(--card);color:var(--ink);font-size:13px;box-shadow:var(--shadow-sm);transition:border-color .15s,box-shadow .15s}
 .globalsearch input:focus{outline:none;border-color:var(--gold-deep);box-shadow:var(--ring-focus)}
 .globalsearch svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);opacity:.45;width:16px;height:16px}
+.archive-toggle{display:none;align-items:center;gap:6px;background:var(--paper-2);border:1px solid var(--line-strong);
+  color:var(--ink-soft);padding:7px 11px;border-radius:8px;font-size:11px;font-weight:600;letter-spacing:.04em;
+  font-family:var(--disp);text-transform:uppercase;cursor:pointer;box-shadow:var(--shadow-sm);transition:.12s;white-space:nowrap}
+.archive-toggle:hover{border-color:var(--ink);color:var(--ink);background:#fff}
+.archive-toggle.on{background:var(--ink);color:var(--gold);border-color:var(--ink)}
+.archbadge{display:inline-block;background:var(--ink);color:var(--gold);font-family:var(--disp);font-size:8.5px;
+  font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:1px 6px;border-radius:3px;margin-right:5px;vertical-align:1px}
+tbody tr.arch{opacity:.5}
+tbody tr.arch .d{color:var(--ink-soft);font-style:italic}
 .activefilters{max-width:1560px;margin:0 auto;padding:0 26px;display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 .activefilters:not(:empty){padding-top:4px;padding-bottom:6px}
 .fpill{display:inline-flex;align-items:center;gap:6px;background:var(--ink);color:#f4f1ea;padding:3px 6px 3px 10px;border-radius:3px;font-size:11px;font-weight:600}
@@ -319,8 +328,10 @@ input[type=checkbox]{width:16px;height:16px;accent-color:var(--gold-deep);cursor
 <div class="toolbar">
   <div class="globalsearch">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-    <input id="globalSearch" type="text" placeholder="Search everything — survey #, item, tag, serial, department…" autocomplete="off">
+    <input id="globalSearch" type="text" placeholder="Search everything — survey #, item, tag, serial, department." autocomplete="off">
   </div>
+  <button class="archive-toggle" id="archiveToggle" title="Show or hide archived items"></button>
+</div>
 </div>
 <div class="activefilters" id="activeFilters"></div>
 
@@ -334,6 +345,8 @@ input[type=checkbox]{width:16px;height:16px;accent-color:var(--gold-deep);cursor
     <select id="bulkPlatform"><option value="">— mark —</option><option value="GD">GovDeals</option><option value="PS">Public Surplus</option><option value="both">Both</option></select>
     <button class="btn btn-sm btn-gold" id="bulkApply">Apply</button>
     <button class="btn btn-sm btn-ghost" id="bulkRelease">+1 Release</button>
+    <button class="btn btn-sm" id="bulkArchive">Archive</button>
+    <button class="btn btn-sm btn-ghost" id="bulkUnarchive" style="display:none">Unarchive</button>
     <button class="btn btn-sm btn-red" id="bulkDelete">Delete</button>
     <button class="btn btn-sm btn-ghost" id="bulkClear">Clear</button>
   </div>
@@ -378,6 +391,7 @@ input[type=checkbox]{width:16px;height:16px;accent-color:var(--gold-deep);cursor
   <div class="drawer-body" id="drawerBody"></div>
   <div class="drawer-foot">
     <button class="btn btn-red" id="dDelete">Delete</button>
+    <button class="btn" id="dArchive">Archive</button>
     <span class="sep"></span>
     <span class="dirty" id="dDirty">● unsaved</span>
     <button class="btn" id="dCancel">Close</button>

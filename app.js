@@ -32,19 +32,21 @@ let editingId = null, drawerDraft = null;
 let pendingRows = null, pendingSheet = null;
 let lastDeleted = null;
 let popCol = null;         // column whose filter popup is open
+let showArchived = false;  // archived items hidden from main view by default
 
 /* ---------- Record ---------- */
 function uid(){ return 'i'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
 function newPlat(){ return { listed:false, releases:0, url:"", price:"", currentBid:"", soldPrice:"" }; }
 function blankItem(){ return { id:uid(), survey:"", description:"", serial:"", tag:"", assetId:"", year:"",
   amount:"", currentBid:"", dateAssigned:"", deptId:"", dept:"", drk:"", condition:"", status:"PREP", notes:"",
-  platforms:{ GD:newPlat(), PS:newPlat() } }; }
+  archived:false, platforms:{ GD:newPlat(), PS:newPlat() } }; }
 function migrate(it){
   it.platforms = it.platforms || {};
   it.platforms.GD = Object.assign(newPlat(), it.platforms.GD||{});
   it.platforms.PS = Object.assign(newPlat(), it.platforms.PS||{});
   if(it.dateAssigned==null) it.dateAssigned="";
   if(it.currentBid==null) it.currentBid="";
+  if(typeof it.archived!=="boolean") it.archived=false;
   if(!it.status) it.status="PREP"; if(!it.id) it.id=uid(); return it;
 }
 /* The current bid shown on a row = highest live bid across listed platforms,
@@ -199,7 +201,7 @@ function passesColumnFilters(it){
   return true;
 }
 function visibleItems(){
-  let v=items.filter(it=>matchesGlobal(it,globalTerm)&&passesColumnFilters(it));
+  let v=items.filter(it=>(showArchived||!it.archived)&&matchesGlobal(it,globalTerm)&&passesColumnFilters(it));
   const col=COLUMNS.find(c=>c.key===sortKey);
   v.sort((a,b)=>{
     if(col&&col.sort==="num"){
@@ -260,7 +262,7 @@ function rowHtml(it){
   const cells = COLUMNS.map(c=>{
     switch(c.key){
       case "survey": return `<td class="td-survey">${it.survey?esc(it.survey):'<span class="nosurvey">—</span>'}</td>`;
-      case "description": return `<td class="td-desc"><span class="d">${esc(it.description)}</span>${it.serial?`<span class="sub">S/N ${esc(it.serial)}</span>`:""}</td>`;
+      case "description": return `<td class="td-desc"><span class="d">${it.archived?'<span class="archbadge">Archived</span> ':''}${esc(it.description)}</span>${it.serial?`<span class="sub">S/N ${esc(it.serial)}</span>`:""}</td>`;
       case "tag": return `<td class="td-mono">${esc(it.tag)||"—"}</td>`;
       case "dateAssigned": return `<td class="td-mono">${esc(it.dateAssigned)||"—"}</td>`;
       case "dept": return `<td class="td-mono" title="${esc(it.dept)}">${esc(it.deptId)?esc(it.deptId)+" · ":""}${esc(it.dept)||"—"}</td>`;
@@ -271,7 +273,7 @@ function rowHtml(it){
       default: return `<td>${esc(cellValue(it,c.key))}</td>`;
     }
   }).join("");
-  return `<tr data-id="${it.id}" class="${sel?'sel':''}">
+  return `<tr data-id="${it.id}" class="${sel?'sel':''} ${it.archived?'arch':''}">
     <td class="td-chk"><input type="checkbox" class="rowchk" data-id="${it.id}" ${sel?'checked':''}></td>
     ${cells}
     <td class="td-actions"><button class="editlink" data-edit="${it.id}">Edit</button></td>
@@ -286,11 +288,17 @@ function render(){
   tb.innerHTML = v.map(rowHtml).join("");
   empty.classList.toggle("hidden", items.length>0);
 
-  document.getElementById("statTotal").textContent=items.length;
-  document.getElementById("statLive").textContent=items.filter(i=>i.status==="LIVE").length;
-  document.getElementById("statRelist").textContent=items.filter(i=>i.status==="RELISTED").length;
-  document.getElementById("statSold").textContent=items.filter(i=>["SOLD","PAID","PICKED_UP"].includes(i.status)).length;
-  document.getElementById("statReview").textContent=items.filter(i=>i.status==="NEEDS_REVIEW").length;
+  const activeItems=items.filter(i=>!i.archived);
+  document.getElementById("statTotal").textContent=activeItems.length;
+  document.getElementById("statLive").textContent=activeItems.filter(i=>i.status==="LIVE").length;
+  document.getElementById("statRelist").textContent=activeItems.filter(i=>i.status==="RELISTED").length;
+  document.getElementById("statSold").textContent=activeItems.filter(i=>["SOLD","PAID","PICKED_UP"].includes(i.status)).length;
+  document.getElementById("statReview").textContent=activeItems.filter(i=>i.status==="NEEDS_REVIEW").length;
+  const archivedCount=items.length-activeItems.length;
+  const at=document.getElementById("archiveToggle");
+  if(at){ at.textContent=archivedCount?(showArchived?`Hide archived (${archivedCount})`:`Show archived (${archivedCount})`):""; at.style.display=archivedCount?"inline-flex":"none"; }
+  const au=document.getElementById("bulkUnarchive");
+  if(au) au.style.display=(showArchived&&selected.size)?"inline-flex":"none";
 
   renderActiveFilters();
   updateBulkbar();
@@ -382,6 +390,18 @@ function bulkDelete(){
   lastDeleted=del.map(d=>({...d})); items=items.filter(it=>!selected.has(it.id)); selected.clear();
   save(); render(); toast(`Deleted ${del.length} item${del.length>1?"s":""}.`,"warn",true);
 }
+function bulkArchive(){
+  if(!selected.size) return;
+  let n=0;
+  items.forEach(it=>{ if(selected.has(it.id)){ it.archived=true; n++; } });
+  selected.clear(); save(); render(); toast(`Archived ${n} item${n>1?"s":""}.`);
+}
+function bulkUnarchive(){
+  if(!selected.size) return;
+  let n=0;
+  items.forEach(it=>{ if(selected.has(it.id)){ it.archived=false; n++; } });
+  save(); render(); toast(`Restored ${n} item${n>1?"s":""} from archive.`);
+}
 
 /* ===================================================================
    Detail drawer
@@ -393,6 +413,7 @@ function openDrawer(id){
   document.getElementById("dTitle").textContent=it.description||"Untitled item";
   document.getElementById("drawerBody").innerHTML=drawerForm(drawerDraft);
   bindDrawer(); setDirty(false);
+  const ab=document.getElementById("dArchive"); if(ab) ab.textContent=it.archived?"Unarchive":"Archive";
   document.getElementById("scrim").classList.add("show");
   document.getElementById("drawer").classList.add("show");
 }
@@ -451,13 +472,16 @@ function saveDrawer(){ if(!editingId) return; const i=items.findIndex(x=>x.id===
 function deleteFromDrawer(){ if(!editingId) return; const it=items.find(i=>i.id===editingId);
   if(!confirm(`Delete "${it.description||it.survey}"?`)) return;
   lastDeleted=[{...it}]; items=items.filter(i=>i.id!==editingId); save(); closeDrawer(true); render(); toast("Item deleted.","warn",true); }
+function toggleArchiveInDrawer(){ if(!drawerDraft) return;
+  drawerDraft.archived=!drawerDraft.archived; setDirty();
+  const ab=document.getElementById("dArchive"); if(ab) ab.textContent=drawerDraft.archived?"Unarchive":"Archive"; }
 
 /* ===================================================================
    Export / restore
    =================================================================== */
 function exportJson(){ download(new Blob([JSON.stringify({version:2,exportedAt:new Date().toISOString(),items},null,2)],{type:"application/json"}),`auction-console-backup-${new Date().toISOString().slice(0,10)}.json`); toast("Backup downloaded."); }
 function exportCsv(){
-  const cols=["survey","description","tag","serial","assetId","dateAssigned","year","amount","currentBid","deptId","dept","condition","status","GD_listed","GD_releases","GD_price","GD_currentBid","GD_soldPrice","GD_url","PS_listed","PS_releases","PS_price","PS_currentBid","PS_soldPrice","PS_url","notes"];
+  const cols=["survey","description","tag","serial","assetId","dateAssigned","year","amount","currentBid","deptId","dept","condition","status","archived","GD_listed","GD_releases","GD_price","GD_currentBid","GD_soldPrice","GD_url","PS_listed","PS_releases","PS_price","PS_currentBid","PS_soldPrice","PS_url","notes"];
   const q=s=>`"${String(s==null?"":s).replace(/"/g,'""')}"`;
   const lines=[cols.join(",")];
   items.forEach(it=>lines.push(cols.map(c=>c.startsWith("GD_")?q(it.platforms.GD[c.slice(3)]):c.startsWith("PS_")?q(it.platforms.PS[c.slice(3)]):q(it[c])).join(",")));
@@ -590,7 +614,11 @@ function wire(){
   document.getElementById("bulkApply").onclick=applyBulk;
   document.getElementById("bulkRelease").onclick=bulkRelease;
   document.getElementById("bulkDelete").onclick=bulkDelete;
+  document.getElementById("bulkArchive").onclick=bulkArchive;
+  document.getElementById("bulkUnarchive").onclick=bulkUnarchive;
   document.getElementById("bulkClear").onclick=()=>{ selected.clear(); render(); };
+  if(document.getElementById("archiveToggle"))
+    document.getElementById("archiveToggle").onclick=()=>{ showArchived=!showArchived; selected.clear(); render(); };
 
   // drawer
   document.getElementById("dClose").onclick=()=>closeDrawer(false);
@@ -598,6 +626,7 @@ function wire(){
   document.getElementById("scrim").onclick=()=>closeDrawer(false);
   document.getElementById("dSave").onclick=saveDrawer;
   document.getElementById("dDelete").onclick=deleteFromDrawer;
+  const dab=document.getElementById("dArchive"); if(dab) dab.onclick=toggleArchiveInDrawer;
 
   // import modal
   document.getElementById("impClose").onclick=closeImport;
