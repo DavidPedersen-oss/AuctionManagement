@@ -710,7 +710,8 @@ async function doFetch(){
   try{
     const r=await F.pullListings();
     const total=r.PS.length+r.GD.length;
-    let html=`Public Surplus: <b>${r.PS.length}</b> · GovDeals: <b>${r.GD.length}</b>.`;
+    const via=r.usingScraper?"scraper Worker":"legacy CORS proxy";
+    let html=`Public Surplus: <b>${r.PS.length}</b> · GovDeals: <b>${r.GD.length}</b> <span style="color:var(--ink-mute);font-size:11px">(via ${via})</span>.`;
     if(r.errors.length) html+=`<br><span style="color:#e06b58">Errors: ${esc(r.errors.join(" / "))}</span>`;
     if(total){
       const applied=applyScraped([...r.PS,...r.GD]);
@@ -756,6 +757,14 @@ function wirePull(){
   document.getElementById("plFetch").onclick=doFetch;
   document.getElementById("plApplyPaste").onclick=()=>applyPaste(false);
   document.getElementById("plPasteAsNew").onclick=()=>applyPaste(true);
+  const sv=document.getElementById("plScraperUrl");
+  if(sv){
+    try{ sv.value=localStorage.getItem("csulb_scraper_url")||""; }catch(e){}
+    sv.addEventListener("change",()=>{
+      try{ localStorage.setItem("csulb_scraper_url",sv.value.trim().replace(/\/+$/,"")); }catch(e){}
+      const hint=document.getElementById("plScraperSaved"); if(hint) hint.style.display=sv.value.trim()?"block":"none";
+    });
+  }
 }
 
 /* ---- Recap ---- */

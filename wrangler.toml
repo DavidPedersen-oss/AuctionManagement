@@ -1,0 +1,3 @@
+name = "csulb-auction-scraper"
+main = "auction-scraper.js"
+compatibility_date = "2026-01-01"

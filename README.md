@@ -52,15 +52,40 @@ matching items with live bids.
 
 A page opened from disk (or GitHub Pages) **cannot reliably fetch** GovDeals
 and Public Surplus directly: those sites block automated requests, and the
-browser blocks cross-site reads. The `Fetch from web` button routes through a
-public CORS proxy as a convenience, but it is best-effort — it can be
-rate-limited or stop working without warning.
+browser blocks cross-site reads. Out of the box, `Fetch from web` routes
+through a public CORS proxy as a convenience, but it is best-effort — it can
+be rate-limited or stop working without warning.
 
-**The reliable path is paste-the-HTML**, which always works offline and never
-depends on a third party. If you need dependable automated scraping, the
-right tool is a small local helper (your Playwright/Chromium approach):
-it runs a real browser, isn't blocked, and can write a JSON the console
-imports. Ask and that companion can be added.
+**The reliable path is the small `auction-scraper.js` Cloudflare Worker
+included in this repo.** It fetches the public search pages server-side from
+Cloudflare's edge (no CORS, no per-user-IP rate limits) and returns the raw
+HTML to the console, where the existing parsers do the extraction. Deploy
+once and paste the Worker URL into the Pull Listings modal — no code change
+required to switch over.
+
+#### Deploying the scraper Worker (one-time, ~2 min)
+
+```
+npm install -g wrangler
+wrangler login
+cd <this repo>
+wrangler deploy
+```
+
+The deploy prints a URL like
+`https://csulb-auction-scraper.<your-subdomain>.workers.dev`.
+
+Then in the console, open **Pull Listings** → paste that URL into the
+**Scraper Worker URL** field → it saves automatically to your browser.
+`Fetch from web` now uses the Worker (the result line says `via scraper
+Worker`). Clearing the field falls back to the legacy CORS proxy.
+
+No KV, no secrets — the Worker reads only two public web pages and has a
+60-second edge cache so it stays friendly to the origin.
+
+**The always-works fallback** is paste-the-HTML: open a listing, copy its
+description HTML, paste it below in the Pull Listings modal. This works
+offline and never depends on a third party.
 
 ## Working with it
 
@@ -68,6 +93,13 @@ imports. Ask and that companion can be added.
 the header row wherever it sits, and pulls every row where **Disposal Action =
 AUCTION**. Multiple line items under one survey collapse into one entry.
 Re-importing keeps your edits and only adds new surveys.
+
+**Archive** — items you don't actively track (e.g. athletics equipment surveys)
+can be selected in the table and bulk-Archived via the bulk action bar, or
+archived per-item from the detail drawer's footer. Archived items are hidden
+from the main view by default and excluded from the stat strip counts; click
+the `Show archived (N)` toggle in the toolbar to bring them back. They stay in
+your data and are exported with the JSON backup and CSV for full round-trip.
 
 **Excel-style column filters, inline status, batch editing, detail drawer,
 export/restore** — unchanged from v5; see the in-app footer hints.
@@ -86,6 +118,8 @@ The recap maps statuses like this: Sold/Paid → **Sold**, Picked up →
     app.js               core logic (parse, filter, edit, persist)
     features.js          v6 add-ons (listing parser, converter, scraper, recap)
     xlsx.full.min.js     SheetJS, vendored so import works offline / on Pages
+    auction-scraper.js  optional Cloudflare Worker for reliable automatic pulls
+    wrangler.toml        Wrangler config for the scraper Worker
 
 ## Backup
 

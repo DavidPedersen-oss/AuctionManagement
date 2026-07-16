@@ -167,20 +167,40 @@
   }
 
   /* ===================================================================
-     3. PULL public listings through a CORS proxy.
-     A static page opened from disk cannot fetch GovDeals / Public
-     Surplus directly (the sites block non-browser requests and the
-     browser blocks cross-origin reads). A public CORS proxy is the
-     only way to do it without a backend; it is best-effort and may be
-     rate-limited or down, which is exactly why paste-the-HTML is the
-     primary, always-works path. We surface failures loudly rather than
-     returning nothing.
+     3. PULL public listings.
+     Two paths:
+       (a) If the user has deployed the auction-scraper Cloudflare Worker
+           and pasted its URL into the Pull modal's "Scraper Worker URL"
+           field, we fetch through it. That path is reliable — no CORS,
+           no rate-limits-on-user-IP — because Cloudflare's edge fetches
+           the pages server-side.
+       (b) Otherwise we fall back to a public CORS proxy. Best-effort,
+           may be rate-limited or down. Paste-the-HTML is still the
+           always-works fallback inside the modal.
+     Both paths return raw HTML; the existing parsers below do the work.
      =================================================================== */
   const PROXY = "https://corsproxy.io/?url=";
   const PS_URL = "https://www.publicsurplus.com/sms/list/current?orgid=1228";
   const GD_URL = "https://www.govdeals.com/en/search?accountId=24860&companyName=California%20State%20University%20-%20Long%20Beach,%20CA";
+  const SCRAPER_KEY = "csulb_scraper_url";
 
-  async function fetchVia(url) {
+  function scraperUrl() {
+    try { return (localStorage.getItem(SCRAPER_KEY) || "").trim().replace(/\/+$/, ""); } catch (e) { return ""; }
+  }
+
+  async function fetchHtml(url) {
+    const scraper = scraperUrl();
+    if (scraper) {
+      // New, reliable path: ask our Cloudflare Worker to fetch on our behalf.
+      const which = url === PS_URL ? "ps" : url === GD_URL ? "gd" : "both";
+      const r = await fetch(scraper + "/listings?platform=" + which, { headers: { "Accept": "application/json" } });
+      if (!r.ok) throw new Error("Scraper HTTP " + r.status);
+      const data = await r.json();
+      const html = which === "ps" ? data.PS : which === "gd" ? data.GD : "";
+      if (!html) throw new Error((data.errors && data.errors[0]) || "Scraper returned no HTML");
+      return html;
+    }
+    // Legacy / fallback path: public CORS proxy (flaky, may be rate-limited).
     const res = await fetch(PROXY + encodeURIComponent(url), { headers: { "Accept": "text/html" } });
     if (!res.ok) throw new Error("HTTP " + res.status);
     return res.text();
@@ -245,10 +265,10 @@
   }
 
   async function pullListings() {
-    const results = { PS: [], GD: [], errors: [] };
-    try { results.PS = parsePublicSurplusList(await fetchVia(PS_URL)); }
+    const results = { PS: [], GD: [], errors: [], usingScraper: !!scraperUrl() };
+    try { results.PS = parsePublicSurplusList(await fetchHtml(PS_URL)); }
     catch (e) { results.errors.push("Public Surplus: " + e.message); }
-    try { results.GD = parseGovDealsList(await fetchVia(GD_URL)); }
+    try { results.GD = parseGovDealsList(await fetchHtml(GD_URL)); }
     catch (e) { results.errors.push("GovDeals: " + e.message); }
     return results;
   }
