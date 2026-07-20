@@ -33,6 +33,7 @@ let pendingRows = null, pendingSheet = null;
 let lastDeleted = null;
 let popCol = null;         // column whose filter popup is open
 let showArchived = false;  // archived items hidden from main view by default
+let athMode = "hide";      // athletics view: "hide" | "only" | "all" (letter-prefixed survey #s)
 
 /* ---------- Record ---------- */
 function uid(){ return 'i'+Math.random().toString(36).slice(2,9)+Date.now().toString(36).slice(-4); }
@@ -57,6 +58,10 @@ function rowCurrentBid(it){
     .filter(v=>v!=null);
   return vals.length?Math.max(...vals):"";
 }
+/* Athletics / non-standard surveys carry a letter-prefixed Survey # (J###, Z###, …)
+   whereas normal auction items are numeric (12-3456). Treated as a separate category. */
+function isAthletics(it){ return /^[A-Za-z]/.test(String(it.survey||"").trim()); }
+function athPass(it){ if(athMode==="all") return true; return athMode==="only"?isAthletics(it):!isAthletics(it); }
 
 /* ---------- Persistence ---------- */
 function save(){ try{ localStorage.setItem(STORE_KEY, JSON.stringify({items, savedAt:Date.now()})); }
@@ -201,7 +206,7 @@ function passesColumnFilters(it){
   return true;
 }
 function visibleItems(){
-  let v=items.filter(it=>(showArchived||!it.archived)&&matchesGlobal(it,globalTerm)&&passesColumnFilters(it));
+  let v=items.filter(it=>(showArchived||!it.archived)&&athPass(it)&&matchesGlobal(it,globalTerm)&&passesColumnFilters(it));
   const col=COLUMNS.find(c=>c.key===sortKey);
   v.sort((a,b)=>{
     if(col&&col.sort==="num"){
@@ -262,7 +267,7 @@ function rowHtml(it){
   const cells = COLUMNS.map(c=>{
     switch(c.key){
       case "survey": return `<td class="td-survey">${it.survey?esc(it.survey):'<span class="nosurvey">—</span>'}</td>`;
-      case "description": return `<td class="td-desc"><span class="d">${it.archived?'<span class="archbadge">Archived</span> ':''}${esc(it.description)}</span>${it.serial?`<span class="sub">S/N ${esc(it.serial)}</span>`:""}</td>`;
+      case "description": return `<td class="td-desc"><span class="d">${it.archived?'<span class="archbadge">Archived</span> ':''}${isAthletics(it)?'<span class="athbadge">Athletics</span> ':''}${esc(it.description)}</span>${it.serial?`<span class="sub">S/N ${esc(it.serial)}</span>`:""}</td>`;
       case "tag": return `<td class="td-mono">${esc(it.tag)||"—"}</td>`;
       case "dateAssigned": return `<td class="td-mono">${esc(it.dateAssigned)||"—"}</td>`;
       case "dept": return `<td class="td-mono" title="${esc(it.dept)}">${esc(it.deptId)?esc(it.deptId)+" · ":""}${esc(it.dept)||"—"}</td>`;
@@ -273,7 +278,7 @@ function rowHtml(it){
       default: return `<td>${esc(cellValue(it,c.key))}</td>`;
     }
   }).join("");
-  return `<tr data-id="${it.id}" class="${sel?'sel':''} ${it.archived?'arch':''}">
+  return `<tr data-id="${it.id}" class="${sel?'sel':''} ${it.archived?'arch':''} ${isAthletics(it)?'ath':''}">
     <td class="td-chk"><input type="checkbox" class="rowchk" data-id="${it.id}" ${sel?'checked':''}></td>
     ${cells}
     <td class="td-actions"><button class="editlink" data-edit="${it.id}">Edit</button></td>
@@ -288,15 +293,27 @@ function render(){
   tb.innerHTML = v.map(rowHtml).join("");
   empty.classList.toggle("hidden", items.length>0);
 
-  const activeItems=items.filter(i=>!i.archived);
+  // Stat strip reflects tracked auction items only — athletics (separate category) excluded.
+  const activeItems=items.filter(i=>!i.archived&&!isAthletics(i));
   document.getElementById("statTotal").textContent=activeItems.length;
   document.getElementById("statLive").textContent=activeItems.filter(i=>i.status==="LIVE").length;
   document.getElementById("statRelist").textContent=activeItems.filter(i=>i.status==="RELISTED").length;
   document.getElementById("statSold").textContent=activeItems.filter(i=>["SOLD","PAID","PICKED_UP"].includes(i.status)).length;
   document.getElementById("statReview").textContent=activeItems.filter(i=>i.status==="NEEDS_REVIEW").length;
-  const archivedCount=items.length-activeItems.length;
+  const archivedCount=items.filter(i=>i.archived).length;
   const at=document.getElementById("archiveToggle");
   if(at){ at.textContent=archivedCount?(showArchived?`Hide archived (${archivedCount})`:`Show archived (${archivedCount})`):""; at.style.display=archivedCount?"inline-flex":"none"; }
+  const athCount=items.filter(i=>isAthletics(i)).length;
+  const atg=document.getElementById("athToggle");
+  if(atg){
+    if(athCount){
+      atg.style.display="inline-flex";
+      atg.textContent = athMode==="hide" ? `Athletics hidden (${athCount})`
+                      : athMode==="only" ? `Athletics only (${athCount})`
+                      : `Athletics shown (${athCount})`;
+      atg.classList.toggle("on", athMode!=="hide");
+    } else atg.style.display="none";
+  }
   const au=document.getElementById("bulkUnarchive");
   if(au) au.style.display=(showArchived&&selected.size)?"inline-flex":"none";
 
@@ -619,6 +636,8 @@ function wire(){
   document.getElementById("bulkClear").onclick=()=>{ selected.clear(); render(); };
   if(document.getElementById("archiveToggle"))
     document.getElementById("archiveToggle").onclick=()=>{ showArchived=!showArchived; selected.clear(); render(); };
+  if(document.getElementById("athToggle"))
+    document.getElementById("athToggle").onclick=()=>{ athMode = athMode==="hide"?"only":athMode==="only"?"all":"hide"; selected.clear(); render(); };
 
   // drawer
   document.getElementById("dClose").onclick=()=>closeDrawer(false);

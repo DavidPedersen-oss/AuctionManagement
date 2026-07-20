@@ -94,8 +94,16 @@ the header row wherever it sits, and pulls every row where **Disposal Action =
 AUCTION**. Multiple line items under one survey collapse into one entry.
 Re-importing keeps your edits and only adds new surveys.
 
-**Archive** — items you don't actively track (e.g. athletics equipment surveys)
-can be selected in the table and bulk-Archived via the bulk action bar, or
+**Athletics category** — surveys with a **letter-prefixed Survey #** (`J123`,
+`Z456`, etc.) are recognized automatically as athletics / non-standard items,
+separate from the numeric auction surveys. They're **hidden from the main view
+by default** and left out of the stat-strip counts. The toolbar toggle cycles
+`Athletics hidden → Athletics only → Athletics shown`, and any that appear carry
+an amber **Athletics** badge. This is distinct from Archive — no manual
+selection needed; it's driven purely by the survey number.
+
+**Archive** — other items you don't actively track can be selected in the table
+and bulk-Archived via the bulk action bar, or
 archived per-item from the detail drawer's footer. Archived items are hidden
 from the main view by default and excluded from the stat strip counts; click
 the `Show archived (N)` toggle in the toolbar to bring them back. They stay in
